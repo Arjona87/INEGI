@@ -8020,7 +8020,12 @@ function IJE_auditoria(){
   return out;
 }
 
-/* ---------- armado del contenido ---------- */
+/* ---------- armado del contenido (versión ejecutiva: 2 páginas + gráficas) ----------
+   Código de color, calculado con los datos en el momento del clic:
+     verde = favorable para Jalisco · rojo = desfavorable · negro = necesario y neutro
+     azul  = prescindible, o indicador que no forma parte del Reporte de resultados
+             del CNIJF-E (Defensoría, Servicios periciales y desgloses de una sola edición).
+   Lo azul se borra antes de enviar sin dejar huecos: cada bloque azul es autónomo. */
 function IJE_imagen(id){
   const ch=IJE_charts[id]; if(!ch) return null;
   try{
@@ -8028,205 +8033,249 @@ function IJE_imagen(id){
     return {url,w:ch.getWidth(),h:ch.getHeight()};
   }catch(e){ return null; }
 }
+/* Indicadores que el reporte trata como indispensables. El resto, si tiene dato, va en azul. */
+const IJE_ESENCIALES=["IJE_ORG","IJE_PER","IJE_PRE","IJE_SEN","IJE_AIN","IJE_ACO","IJE_TPE","IJE_CIT","IJE_CCT","IJE_CPE","IJE_CJO","IJE_SCO","IJE_MPE","IJE_MEX"];
+/* ¿El indicador sale en el Reporte de resultados del CNIJF-E más reciente? Se decide con la
+   referencia de la fuente escrita en la hoja (columna I de cada sub-bloque), no con una lista fija. */
+function IJE_censoMax(){
+  let m=0;
+  IJE_E.orden.forEach(c=>{ const r=/CNIJF-E\s*(\d{4})/g; let x; const f=IJE_E.bloques[c].f||"";
+    while((x=r.exec(f))) m=Math.max(m,+x[1]); });
+  return m;
+}
+function IJE_enCenso(cod,max){
+  const f=(IJE_E.bloques[cod]||{}).f||"";
+  return new RegExp("CNIJF-E\\s*"+max).test(f);
+}
+function IJE_tono(v,s){ if(v===null||!s||Math.abs(v)<1) return null; return ((v>0)===(s>0))?"v":"r"; }
+function IJE_tonoLugar(pos,posp,s){ if(!pos||!posp||pos===posp||!s) return null; return ((pos<posp)===(s>0))?"v":"r"; }
+function IJE_sg(v,suf){ return v===null?"s/d":(v>0?"+":(v<0?"−":""))+(suf==="pp"?IJE_fmtR(Math.abs(v),2)+" pp":IJE_pct(Math.abs(v))); }
+const S=(x,k,b)=>({x:String(x),k:k||null,b:!!b});
+
 function IJE_armarReporte(){
   const i=IJE_edIdx, e=IJE_EDS[i], p=i>0?IJE_EDS[i-1]:null, B=[];
   const ahora=new Date();
   const fecha=ahora.toLocaleDateString("es-MX",{day:"numeric",month:"long",year:"numeric"})+", "+ahora.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"});
-  const origen = IJE_origen==="vivo" ? "hoja de cálculo en línea" : "copia local del libro de trabajo (la hoja no respondió)";
-  B.push({t:"h1",v:`Censo Nacional de Impartición de Justicia Estatal ${e.ed}`});
-  B.push({t:"h2",v:`Jalisco frente al agregado nacional y a las 32 entidades · datos de ${e.dato}`});
-  B.push({t:"meta",v:`Elaborado por CGES/DGAPP/AA con base en INEGI · Generado el ${fecha} · Datos leídos de la ${origen}`+
-    (p?` · Comparación contra ${p.dato} (CNIJE ${p.ed})`:"")});
-
+  B.push({t:"h1",v:`CNIJE ${e.ed}: Jalisco frente al país`});
+  B.push({t:"h2",v:`Censo Nacional de Impartición de Justicia Estatal · datos de ${e.dato}`+(p?` comparados con ${p.dato}`:"")});
+  B.push({t:"meta",v:`CGES/DGAPP/AA con base en INEGI · ${fecha}`});
   const sinJal=!IJE_M.filas.some(f=>f.v && IJE_num(f.v[e.c*2+1])!==null);
   if(sinJal){
-    B.push({t:"p",v:`La edición CNIJE ${e.ed} solo contiene cifras nacionales tomadas de series de ediciones posteriores; no hay cifras de Jalisco ni desglose por entidad. Elija una edición desde la 2024 para generar el análisis de Jalisco.`});
+    B.push({t:"p",s:[S(`La edición CNIJE ${e.ed} solo trae cifras nacionales; no hay datos de Jalisco ni desglose por entidad. Elija una edición desde la 2024.`)]});
     return {B,ed:e.ed,dato:e.dato};
   }
+  const max=IJE_censoMax();
   const cods=IJE_E.orden.filter(c=>IJE_IND[c]);
-  const K=cods.map(c=>({c,q:IJE_kpi(c),ind:IJE_IND[c]})).filter(o=>o.q && o.q.v!==null && o.q.pos);
-  const conVar=K.map(o=>Object.assign(o,{v:IJE_var(o.q.vp,o.q.v)}));
-  const top3=K.filter(o=>o.q.pos<=3), top10=K.filter(o=>o.q.pos<=10);
-  const suben=K.filter(o=>o.q.posp && o.q.pos<o.q.posp), bajan=K.filter(o=>o.q.posp && o.q.pos>o.q.posp);
-  const iguales=K.filter(o=>o.q.posp && o.q.pos===o.q.posp);
-  const fav=conVar.filter(o=>o.v!==null && o.ind.s && Math.abs(o.v)>=1 && ((o.v>0)===(o.ind.s>0))).sort((a,b)=>Math.abs(b.v)-Math.abs(a.v));
-  const desf=conVar.filter(o=>o.v!==null && o.ind.s && Math.abs(o.v)>=1 && ((o.v>0)!==(o.ind.s>0))).sort((a,b)=>Math.abs(b.v)-Math.abs(a.v));
-  const prom=100/32, sobre=K.filter(o=>o.q.part!==null && o.q.part>=prom);
-  const maxPart=K.filter(o=>o.q.part!==null).sort((a,b)=>b.q.part-a.q.part)[0];
-  const tj=IJE_tasaConclusion(i,true), tn=IJE_tasaConclusion(i,false), tjp=p?IJE_tasaConclusion(i-1,true):null;
-  const at=IJE_atipicos(), aud=IJE_auditoria();
-  const rup=cods.filter(c=>IJE_E.bloques[c].w).map(c=>IJE_IND[c].c);
+  const censo=c=>IJE_enCenso(c,max), esen=c=>censo(c) && IJE_ESENCIALES.indexOf(c)!==-1;
+  const K=cods.map(c=>{ const q=IJE_kpi(c); return q && q.v!==null && q.pos ? {c,q,ind:IJE_IND[c],v:IJE_var(q.vp,q.v)} : null; }).filter(Boolean);
+  const Kc=K.filter(o=>censo(o.c)), Kx=K.filter(o=>!censo(o.c));
+  const ref=p?String(p.dato):"la edición previa";
+
+  B.push({t:"leyenda",max});
 
   /* 1. Resumen ejecutivo */
   B.push({t:"h3",v:"1. Resumen ejecutivo"});
-  const R=[];
-  R.push(`Jalisco se ubica entre los tres primeros lugares nacionales en ${top3.length} de ${K.length} indicadores con desglose por entidad y entre los diez primeros en ${top10.length}.`+
-    (top3.length?` Primeros lugares: ${top3.sort((a,b)=>a.q.pos-b.q.pos).slice(0,8).map(o=>`${o.ind.c} (${o.q.pos}.º)`).join("; ")}.`:""));
-  if(suben.length+bajan.length+iguales.length)
-    R.push(`Frente a la edición previa, Jalisco mejora de lugar en ${suben.length} indicadores, retrocede en ${bajan.length} y conserva su lugar en ${iguales.length}.`);
-  if(fav.length) R.push(`Movimientos favorables más amplios: ${fav.slice(0,3).map(o=>`${o.ind.c} (${o.v>0?"+":"−"}${IJE_pct(Math.abs(o.v))})`).join("; ")}.`);
-  if(desf.length) R.push(`Movimientos desfavorables más amplios: ${desf.slice(0,3).map(o=>`${o.ind.c} (${o.v>0?"+":"−"}${IJE_pct(Math.abs(o.v))})`).join("; ")}.`);
+  const top=Kc.filter(o=>o.q.pos<=3).sort((a,b)=>a.q.pos-b.q.pos);
+  if(top.length){
+    /* estar entre los primeros es bueno en capacidad o resultados (verde) y malo en rezago (rojo) */
+    const tn1=o=>o.ind.s>0?"v":(o.ind.s<0?"r":null);
+    const s=[S("Jalisco ocupa uno de los tres primeros lugares nacionales en "),S(`${top.length} de ${Kc.length}`,null,true),
+      S(" indicadores del censo"+(top.some(o=>o.ind.s<0)?" (en rojo, los de rezago, donde un lugar alto es desfavorable)":"")+": ")];
+    top.forEach((o,k)=>{ s.push(S(`${o.ind.c} (${o.q.pos}.º)`,tn1(o))); s.push(S(k<top.length-1?"; ":".")); });
+    B.push({t:"lb",s});
+  } else B.push({t:"lb",s:[S("Jalisco no ocupa ninguno de los tres primeros lugares nacionales en los indicadores del censo.","r")]});
+  const topX=Kx.filter(o=>o.q.pos<=3).sort((a,b)=>a.q.pos-b.q.pos);
+  if(topX.length) B.push({t:"lb",az:true,s:[S(`Fuera del censo (reportes transversales y desgloses de una sola edición) suma ${topX.length} primeros lugares más: ${topX.map(o=>`${o.ind.c} (${o.q.pos}.º)`).join("; ")}.`)]});
+  const fav=Kc.filter(o=>IJE_tono(o.v,o.ind.s)==="v").sort((a,b)=>Math.abs(b.v)-Math.abs(a.v));
+  const des=Kc.filter(o=>IJE_tono(o.v,o.ind.s)==="r").sort((a,b)=>Math.abs(b.v)-Math.abs(a.v));
+  const neu=Kc.filter(o=>o.v!==null && !IJE_tono(o.v,o.ind.s));
+  B.push({t:"lb",s:[S(`Frente a ${ref}, en los indicadores del censo: `),S(`${fav.length} se movieron a favor`,"v",true),S(", "),
+    S(`${des.length} en contra`,"r",true),S(` y ${neu.length} sin cambio relevante o sin sentido favorable predefinido.`)]});
+  if(fav.length){ const s=[S("A favor: ")]; fav.slice(0,3).forEach((o,k)=>{ s.push(S(`${o.ind.c} ${IJE_sg(o.v)}`,"v")); s.push(S(k<Math.min(3,fav.length)-1?"; ":".")); }); B.push({t:"lb",s}); }
+  if(des.length){ const s=[S("En contra: ")]; des.slice(0,3).forEach((o,k)=>{ s.push(S(`${o.ind.c} ${IJE_sg(o.v)}`,"r")); s.push(S(k<Math.min(3,des.length)-1?"; ":".")); }); B.push({t:"lb",s}); }
+  const tj=IJE_tasaConclusion(i,true), tn=IJE_tasaConclusion(i,false), tjp=p?IJE_tasaConclusion(i-1,true):null;
   if(tj!==null && tn!==null){
-    const pp=tjp===null?null:tj-tjp;
-    R.push(`En primera instancia, Jalisco concluyó ${IJE_pct(tj)} de los asuntos ingresados en ${e.dato}, frente a ${IJE_pct(tn)} del agregado nacional`+
-      (pp===null?"":` (${pp>=0?"+":"−"}${IJE_fmtR(Math.abs(pp),2)} puntos porcentuales frente a ${p.dato})`)+
-      `: ${tj>=tn?"por encima":"por debajo"} del promedio del país.`);
+    const s=[S("Primera instancia: Jalisco concluyó "),S(IJE_pct(tj),tj>=tn?"v":"r",true),S(` de los asuntos ingresados, frente a ${IJE_pct(tn)} nacional`)];
+    if(tjp!==null){ const pp=tj-tjp; s.push(S(" (")); s.push(S(IJE_sg(pp,"pp")+` frente a ${ref}`,Math.abs(pp)<0.5?null:(pp>0?"v":"r"))); s.push(S(")")); }
+    s.push(S("."));
+    B.push({t:"lb",s});
   }
-  R.push(`La participación de Jalisco supera el peso promedio de una entidad (1/32 = ${IJE_pct(prom)}) en ${sobre.length} de ${K.filter(o=>o.q.part!==null).length} indicadores`+
-    (maxPart?`; la mayor es ${maxPart.ind.c}, con ${IJE_pct(maxPart.q.part)} del total nacional.`:"."));
-  const nAlert=at.length+rup.length+aud.verMal.length+aud.descuadre.length;
-  R.push(nAlert ? `Se identificaron ${nAlert} alertas de comparabilidad o de integridad (sección 5); conviene revisarlas antes de citar esas cifras.`
-                : "No se identificaron alertas de comparabilidad ni de integridad en la edición seleccionada.");
-  B.push({t:"lista",v:R});
+  const dpen=IJE_derivada(IJE_DERIVADAS["Justicia penal"][0]);
+  if(dpen && dpen.j!==null && dpen.n!==null)
+    B.push({t:"lb",s:[S("Justicia penal: Jalisco resolvió "),S(`${IJE_fmtR(dpen.j,2)} causas por cada 100 ingresadas`,dpen.j>=dpen.n?"v":"r",true),
+      S(` (todos los sistemas), frente a ${IJE_fmtR(dpen.n,2)} nacional.`)]});
+  const prom=100/32, conPart=Kc.filter(o=>o.q.part!==null), sobre=conPart.filter(o=>o.q.part>=prom);
+  B.push({t:"lb",az:true,s:[S(`La participación de Jalisco supera el peso promedio de una entidad (1/32 = ${IJE_pct(prom)}) en ${sobre.length} de ${conPart.length} indicadores del censo.`)]});
+  const at=IJE_atipicos(), aud=IJE_auditoria();
+  const nInt=aud.verMal.length+aud.descuadre.length;
+  B.push({t:"lb",s: nInt
+    ? [S(`Antes de citar las cifras, revisar ${nInt} diferencia(s) de integridad en la base (sección 4).`,"r",true)]
+    : [S(`Integridad verificada: en ${aud.verOK} cuadros la suma de las entidades coincide con el total publicado.`,"v")]});
 
   /* 2. Indicadores clave */
   B.push({t:"h3",v:"2. Indicadores clave de Jalisco"});
-  const claves=["IJE_ORG","IJE_PER","IJE_PRE","IJE_SEN","IJE_AIN","IJE_ACO","IJE_CIT","IJE_SCO","IJE_MPE","IJE_MEX","IJE_DPP","IJE_SPP","IJE_SPK"];
+  const claves=["IJE_ORG","IJE_PER","IJE_PRE","IJE_SEN","IJE_AIN","IJE_ACO","IJE_CIT","IJE_CCT","IJE_SCO","IJE_MPE","IJE_MEX","IJE_DPP","IJE_SPP","IJE_SPK"];
   const filasK=[];
   claves.forEach(c=>{
-    const q=IJE_kpi(c); if(!q || q.v===null) return;
-    const v=IJE_var(q.vp,q.v);
-    filasK.push([IJE_IND[c].c, q.edp?IJE_fmt(q.vp):"s/d", IJE_fmt(q.v),
-      v===null?"s/d":(v>0?"+":(v<0?"−":""))+IJE_pct(Math.abs(v)),
-      q.posp?`${q.posp}.º → ${q.pos}.º`:`${q.pos||"s/d"}${q.pos?".º":""}`, IJE_pct(q.part)]);
+    const o=K.find(x=>x.c===c); if(!o) return;
+    const q=o.q;
+    filasK.push({az:!esen(c),c:[S(o.ind.c),S(q.edp?IJE_fmt(q.vp):"s/d"),S(IJE_fmt(q.v)),S(IJE_sg(o.v),IJE_tono(o.v,o.ind.s)),
+      S(q.posp?`${q.posp}.º → ${q.pos}.º`:`${q.pos}.º`,IJE_tonoLugar(q.pos,q.posp,o.ind.s)),S(IJE_pct(q.part))]});
   });
-  if(tj!==null) filasK.push(["Tasa de conclusión en primera instancia (%)", tjp===null?"s/d":IJE_pct(tjp), IJE_pct(tj),
-    tjp===null?"s/d":`${tj-tjp>=0?"+":"−"}${IJE_fmtR(Math.abs(tj-tjp),2)} pp`, "—", `Nacional: ${IJE_pct(tn)}`]);
-  B.push({t:"tabla",cab:["Indicador",p?String(p.dato):"Previo",String(e.dato),"Variación","Lugar","% del total"],
-    anchos:[38,12,12,12,13,13],filas:filasK});
-  const img0=IJE_imagen("IJE_g00");
-  if(img0) B.push({t:"img",v:img0,pie:`Gráfica 1. Participación de Jalisco en el total nacional de cada indicador, ${e.dato}. La línea punteada marca 1/32. Fuente: INEGI; cálculo CGES.`});
+  if(tj!==null){
+    const pp=tjp===null?null:tj-tjp;
+    filasK.splice(6,0,{az:false,c:[S("Tasa de conclusión, 1.ª instancia"),S(tjp===null?"s/d":IJE_pct(tjp)),S(IJE_pct(tj),tj>=tn?"v":"r"),
+      S(IJE_sg(pp,"pp"),pp===null||Math.abs(pp)<0.5?null:(pp>0?"v":"r")),S("—"),S(`Nac.: ${IJE_pct(tn)}`)]});
+  }
+  B.push({t:"tabla",cab:["Indicador",p?String(p.dato):"Previo",String(e.dato),"Variación","Lugar","% del total"],anchos:[37,12,12,12,14,13],filas:filasK});
+  B.push({t:"nota",s:[S("Lugar 1 = valor más alto entre las 32 entidades. Verde y rojo indican si el movimiento favorece o no a Jalisco; en indicadores de volumen (asuntos o causas ingresadas, sentencias condenatorias, cadáveres) no se asigna color.")]});
 
-  /* 3. Análisis por tema */
-  B.push({t:"h3",v:"3. Análisis por tema"});
+  /* 3. Lectura por tema */
+  B.push({t:"h3",v:"3. Lectura por tema"});
   IJE_TEMAS.forEach(tema=>{
-    const fr=cods.filter(c=>IJE_IND[c].g===tema).map(IJE_frase).filter(Boolean);
-    const der=(IJE_DERIVADAS[tema]||[]).map(IJE_derivada).filter(Boolean).map(IJE_fraseDer);
-    if(!fr.length && !der.length) return;
-    B.push({t:"h4",v:tema});
-    if(tema==="Defensoría pública") B.push({t:"nota",v:"En Jalisco la función la ejerce la Procuraduría Social (Poder Ejecutivo); el total nacional de unidades estatales puede excluir a la Ciudad de México según la edición."});
-    if(tema==="Servicios periciales") B.push({t:"nota",v:"En Jalisco la función la ejerce el Instituto Jalisciense de Ciencias Forenses (IJCF)."});
-    B.push({t:"lista",v:fr.concat(der)});
-  });
-  const img1=IJE_imagen("IJE_g12"), img2=IJE_imagen("IJE_g14");
-  if(img1) B.push({t:"img",v:img1,pie:"Gráfica 2. Tasa de conclusión en primera instancia, Jalisco y nacional. Fuente: INEGI; cálculo CGES."});
-  if(img2) B.push({t:"img",v:img2,pie:"Gráfica 3. Causas penales ingresadas en todos los sistemas: nacional (barras) y Jalisco (línea). Fuente: INEGI."});
-
-  /* 4. Tabla de posiciones */
-  B.push({t:"salto"});
-  B.push({t:"h3",v:`4. Posición de Jalisco en los ${K.length} indicadores con desglose por entidad`});
-  const filasP=[];
-  IJE_TEMAS.forEach(tema=>{
-    K.filter(o=>o.ind.g===tema).forEach(o=>{
-      const v=IJE_var(o.q.vp,o.q.v);
-      filasP.push([(o.q.b.w?"⚠ ":"")+o.ind.c, tema, IJE_fmt(o.q.v)+(o.q.ed!==e.ed?` (${o.q.ed-1})`:""),
-        v===null?"s/d":(v>0?"+":(v<0?"−":""))+IJE_pct(Math.abs(v)), o.q.posp?String(o.q.posp):"s/d", String(o.q.pos), IJE_pct(o.q.part)]);
+    const lista=K.filter(o=>o.ind.g===tema);
+    if(!lista.length) return;
+    const todoAzul=!lista.some(o=>esen(o.c));
+    const s=[S(tema+". ",null,true)];
+    lista.forEach((o,k)=>{
+      const az=!esen(o.c), lug=o.q.posp&&o.q.posp!==o.q.pos?`${o.q.posp}.º→${o.q.pos}.º`:`${o.q.pos}.º`;
+      const tx=`${o.ind.c} ${IJE_fmt(o.q.v)}${o.q.ed!==e.ed?` (${o.q.ed-1})`:""} (${o.v===null?"sin comparativo":IJE_sg(o.v)}; ${lug})`;
+      s.push(S(tx, az&&!todoAzul?"a":IJE_tono(o.v,o.ind.s)));
+      s.push(S(k<lista.length-1?"; ":".", az&&!todoAzul?"a":null));
+    });
+    B.push({t:"lb",az:todoAzul,s});
+    (IJE_DERIVADAS[tema]||[]).map(dv=>({dv,r:IJE_derivada(dv)})).filter(x=>x.r).forEach((x,k)=>{
+      const r=x.r, dep=[x.dv.a].concat(x.dv.b).every(c=>censo(c));
+      const tn2 = (r.j===null||r.n===null||!x.dv.s) ? null : (((r.j>=r.n)===(x.dv.s>0))?"v":"r");
+      B.push({t:"lb2",az:todoAzul||!dep||k>0,s:[S(`${r.t}: `),S(`Jalisco ${IJE_fmtR(r.j,r.d)}`,tn2,true),S(` frente a ${IJE_fmtR(r.n,r.d)} nacional (cálculo CGES).`)]});
     });
   });
-  B.push({t:"tabla",cab:["Indicador","Tema","Jalisco","Variación","Lugar previo","Lugar","% del total"],anchos:[30,18,12,11,9,8,12],filas:filasP});
 
-  /* 5. Alertas */
-  B.push({t:"h3",v:"5. Alertas de comparabilidad e integridad"});
-  const A=[];
-  if(rup.length) A.push(`Ruptura de serie (⚠): ${rup.join("; ")}. La edición 2024 suma el Sistema Tradicional al SPA/SIJPA o cambia la cobertura.`);
-  at.slice(0,12).forEach(o=>A.push(`Variación atípica de Jalisco: ${IJE_corto(o.f.lab)} (${IJE_ctx(o.f)}): ${IJE_fmt(IJE_val(o.f,i-1,true))} → ${IJE_fmt(IJE_val(o.f,i,true))} (${o.v>0?"+":"−"}${IJE_pct(Math.abs(o.v))}).`));
-  if(at.length>12) A.push(`Hay ${at.length-12} variaciones atípicas adicionales; están listadas en la sección «Tabla completa» del tablero.`);
-  const as=IJE_fila("VI","Asuntos de defensoría","Asuntos solicitados: UE"), sv=IJE_fila("VI","Servicios de asesoría","Servicios solicitados: UE");
-  [i-1,i].forEach(q=>{ if(q<0) return; const a=IJE_num(IJE_val(as,q,true)), b=IJE_num(IJE_val(sv,q,true));
-    if(a!==null && a===b) A.push(`Defensoría ${IJE_EDS[q].dato}: Jalisco reporta la misma cifra (${IJE_fmt(a)}) en asuntos de defensoría y en servicios de asesoría jurídica; verificar con la fuente.`); });
-  aud.verMal.forEach(t=>A.push("Integridad: "+t+"."));
-  aud.descuadre.forEach(t=>A.push("Descuadre entre bloques: "+t+"."));
-  B.push({t:"lista",v:A.length?A:["Sin alertas para la edición seleccionada."]});
+  /* 4. Alertas */
+  B.push({t:"h3",v:"4. Alertas"});
+  aud.verMal.forEach(t=>B.push({t:"lb",s:[S("Integridad: "+t+".","r")]}));
+  aud.descuadre.forEach(t=>B.push({t:"lb",s:[S("Diferencia entre bloques: "+t+".","r")]}));
+  const rup=cods.filter(c=>IJE_E.bloques[c].w && K.some(o=>o.c===c));
+  if(rup.length) B.push({t:"lb",az:!rup.some(esen),s:[S(`Ruptura de serie (⚠): ${rup.map(c=>IJE_IND[c].c).join("; ")}. La edición 2024 suma el Sistema Tradicional o cambia la cobertura; esas variaciones se leen con cautela.`)]});
+  if(at.length) B.push({t:"lb",az:true,s:[S(`${at.length} renglones de detalle de Jalisco varían más de ±50 %: `+
+    at.slice(0,4).map(o=>`${IJE_corto(o.f.lab)} (${IJE_ctx(o.f)}) ${IJE_sg(o.v)}`).join("; ")+(at.length>4?"; …":"")+".")]});
+  if(!nInt) B.push({t:"lb",s:[S("Sin diferencias de integridad entre las entidades y los totales publicados.","v")]});
 
-  /* 6. Anexo de auditoría */
-  B.push({t:"h3",v:"6. Anexo de auditoría de datos"});
-  const filasD=IJE_M.filas.filter(f=>f.t==="d").length;
-  const Q=[
-    `Origen: ${origen}. Lectura: ${IJE_horaDatos?IJE_horaDatos.toLocaleString("es-MX"):"—"}; ediciones con dato: ${IJE_EDS.map(x=>x.ed).join(", ")}.`,
-    `Renglones de dato leídos en el bloque principal: ${filasD}. Indicadores con desglose por entidad: ${aud.nBloques}.`,
-    `Control suma de entidades − total publicado: ${aud.verOK} cuadros cuadran (0 o ±0.2 por redondeo de INEGI)`+(aud.verMal.length?`; ${aud.verMal.length} no cuadran (ver sección 5).`:"; ninguno presenta diferencia."),
-    `Coincidencia de Jalisco y del total nacional entre el renglón principal y su bloque por entidad: ${aud.descuadre.length?aud.descuadre.length+" diferencias (ver sección 5)":"sin diferencias"}.`,
-    aud.faltan.length?`Cuadros con entidades sin dato publicado: ${aud.faltan.slice(0,6).join("; ")}${aud.faltan.length>6?"; …":""}.`:"Todos los cuadros por entidad tienen las 32 entidades.",
-    IJE_origen==="vivo"
-      ? `Celdas que la lectura en línea entregó vacías y se completaron: ${IJE_cuenta.map} de Jalisco con su bloque por entidad leído en línea; ${IJE_cuenta.res} con la copia local del libro de trabajo (${IJE_cuenta.resJal} de ellas en columnas de Jalisco); ${IJE_cuenta.ent} en bloques por entidad.`
-      : "Todas las cifras provienen de la copia local del libro de trabajo.",
-    "Reglas: «s/d» = la fuente no publica el dato (nunca equivale a cero). Lugar 1 = valor más alto entre las entidades con dato; los empates comparten lugar. Variaciones, razones y participaciones son cálculos CGES a dos decimales con cifras publicadas."
-  ];
-  B.push({t:"lista",v:Q});
+  /* 5. Fuente y método */
+  B.push({t:"p",s:[S("Fuente: INEGI, Censo Nacional de Impartición de Justicia Federal y Estatal; Defensoría pública; Servicios periciales y/o servicio médico forense. Variaciones, lugares y razones: cálculo CGES con cifras publicadas; «s/d» = sin dato publicado.",null)],chico:true});
+  B.push({t:"p",az:true,chico:true,s:[S(`Auditoría: datos leídos de la ${IJE_origen==="vivo"?"hoja en línea":"copia local"} (${IJE_horaDatos?IJE_horaDatos.toLocaleString("es-MX"):"—"}); `+
+    `${aud.verOK} cuadros cuadran con su total; `+(IJE_origen==="vivo"?`${IJE_cuenta.res} celdas tomadas de la copia local (${IJE_cuenta.resJal} de Jalisco) porque la lectura en línea las entregó vacías.`:"todas las cifras provienen de la copia local."))]});
 
-  /* 7. Fuentes */
-  B.push({t:"h3",v:"Fuentes"});
-  const F=IJE_M.ley.filter(t=>/^Fuentes|^INEGI\./.test(t)).map(t=>t.replace(/^Fuentes \(APA 7\):\s*/,""));
-  B.push({t:"lista",v:F.length?F:["INEGI. Censo Nacional de Impartición de Justicia Federal y Estatal; Defensoría pública; Servicios periciales y/o servicio médico forense."]});
-  B.push({t:"nota",v:"Elaboración: CGES/DGAPP/AA, con base en INEGI."});
+  /* Gráficas */
+  B.push({t:"salto"});
+  B.push({t:"h3",v:"Gráficas"});
+  const g=[["IJE_g00",`Participación de Jalisco en el total nacional de cada indicador, ${e.dato}. Línea punteada: 1/32. Fuente: INEGI; cálculo CGES.`],
+           ["IJE_g12","Tasa de conclusión en primera instancia, Jalisco y nacional (%). Fuente: INEGI; cálculo CGES."],
+           ["IJE_g14","Causas penales ingresadas en todos los sistemas: nacional (barras) y Jalisco (línea). Fuente: INEGI."]];
+  let n=0;
+  g.forEach(([id,pie])=>{ const im=IJE_imagen(id); if(im){ n++; B.push({t:"img",v:im,pie:`Gráfica ${n}. ${pie}`}); } });
+
+  /* Anexo prescindible: tabla completa de posiciones */
+  B.push({t:"salto",az:true});
+  B.push({t:"h3",az:true,v:`Anexo. Posición de Jalisco en los ${K.length} indicadores con desglose por entidad`});
+  const filasP=[];
+  IJE_TEMAS.forEach(tema=>K.filter(o=>o.ind.g===tema).forEach(o=>filasP.push({az:true,c:[S((o.q.b.w?"⚠ ":"")+o.ind.c),S(tema),
+    S(IJE_fmt(o.q.v)+(o.q.ed!==e.ed?` (${o.q.ed-1})`:"")),S(IJE_sg(o.v)),S(o.q.posp?String(o.q.posp):"s/d"),S(String(o.q.pos)),S(IJE_pct(o.q.part))]})));
+  B.push({t:"tabla",az:true,cab:["Indicador","Tema","Jalisco","Variación","Lugar previo","Lugar","% del total"],anchos:[30,18,12,11,9,8,12],filas:filasP});
   return {B,ed:e.ed,dato:e.dato};
 }
 
+/* ---------- colores y tipografía del reporte ---------- */
+const IJE_RC={v:"1E8449",r:"C0392B",a:"1F6FD1",n:"1A1A1A",g:"5A6472"};
+const IJE_FUENTE="Montserrat";
+function IJE_col(seg,az){ return az?IJE_RC.a:(seg.k?IJE_RC[seg.k]:IJE_RC.n); }
+
 /* ---------- salida 1: .docx ---------- */
 function IJE_aDocx(D,res){
-  const AZUL="1B3A8C", OSC="0A2A5E", NEGRO="1A1A1A", TENUE="5A6472", NAR="C2610A";
-  const H=[];
-  const parr=(txt,o)=>{ o=o||{}; return new D.Paragraph({spacing:{before:o.antes||0,after:o.despues===undefined?120:o.despues},
-    alignment:o.centro?D.AlignmentType.CENTER:D.AlignmentType.LEFT,
-    children:[new D.TextRun({text:txt,bold:!!o.negrita,italics:!!o.it,size:o.tam||20,color:o.color||NEGRO,font:"Calibri"})]}); };
+  const H=[], TOT=10800;
+  const run=(seg,az,tam,extra)=>new D.TextRun(Object.assign({text:seg.x,bold:!!seg.b,size:tam,color:IJE_col(seg,az),font:IJE_FUENTE},extra||{}));
+  const parr=(txt,o)=>new D.Paragraph({spacing:{before:o.antes||0,after:o.despues===undefined?80:o.despues},
+    children:[new D.TextRun({text:txt,bold:!!o.negrita,size:o.tam||17,color:o.color||IJE_RC.n,font:IJE_FUENTE})]});
   res.B.forEach(b=>{
+    const az=!!b.az;
     if(b.t==="salto"){ H.push(new D.Paragraph({children:[new D.PageBreak()]})); return; }
-    if(b.t==="h1"){ H.push(parr(b.v,{negrita:true,tam:34,color:AZUL,despues:60})); return; }
-    if(b.t==="h2"){ H.push(parr(b.v,{negrita:true,tam:22,color:OSC,despues:60})); return; }
-    if(b.t==="meta"){ H.push(parr(b.v,{tam:16,color:TENUE,despues:200})); return; }
-    if(b.t==="h3"){ H.push(parr(b.v,{negrita:true,tam:25,color:AZUL,antes:220,despues:90})); return; }
-    if(b.t==="h4"){ H.push(parr(b.v,{negrita:true,tam:21,color:OSC,antes:140,despues:60})); return; }
-    if(b.t==="p"){ H.push(parr(b.v,{tam:20})); return; }
-    if(b.t==="nota"){ H.push(parr(b.v,{tam:16,color:TENUE,it:true,despues:80})); return; }
-    if(b.t==="lista"){ b.v.forEach(l=>H.push(new D.Paragraph({bullet:{level:0},spacing:{after:80},
-      children:[new D.TextRun({text:l,size:19,color:/^(Variación atípica|Integridad|Descuadre|Ruptura|Defensoría \d)/.test(l)?NAR:NEGRO,font:"Calibri"})]}))); return; }
+    if(b.t==="h1"){ H.push(parr(b.v,{negrita:true,tam:30,despues:20})); return; }
+    if(b.t==="h2"){ H.push(parr(b.v,{negrita:true,tam:19,despues:20})); return; }
+    if(b.t==="meta"){ H.push(parr(b.v,{tam:14,color:IJE_RC.g,despues:80})); return; }
+    if(b.t==="leyenda"){
+      H.push(new D.Paragraph({spacing:{after:100},border:{top:{style:D.BorderStyle.SINGLE,size:6,color:IJE_RC.a},bottom:{style:D.BorderStyle.SINGLE,size:6,color:IJE_RC.a}},
+        children:[new D.TextRun({text:"Código de color (borrar este recuadro antes de enviar): ",bold:true,size:14,color:IJE_RC.a,font:IJE_FUENTE}),
+          new D.TextRun({text:"verde = favorable para Jalisco; ",size:14,color:IJE_RC.v,font:IJE_FUENTE}),
+          new D.TextRun({text:"rojo = desfavorable; ",size:14,color:IJE_RC.r,font:IJE_FUENTE}),
+          new D.TextRun({text:"negro = necesario; ",size:14,color:IJE_RC.n,font:IJE_FUENTE}),
+          new D.TextRun({text:`azul = prescindible, o fuera del Reporte de resultados del CNIJF-E (Defensoría, Servicios periciales y desgloses de una sola edición), que se puede borrar completo.`,size:14,color:IJE_RC.a,font:IJE_FUENTE})]}));
+      return;
+    }
+    if(b.t==="h3"){ H.push(parr(b.v,{negrita:true,tam:21,antes:110,despues:50,color:az?IJE_RC.a:IJE_RC.n})); return; }
+    if(b.t==="p"){ H.push(new D.Paragraph({spacing:{before:60,after:40},children:b.s.map(sg=>run(sg,az,b.chico?14:17))})); return; }
+    if(b.t==="nota"){ H.push(new D.Paragraph({spacing:{after:40},children:b.s.map(sg=>run(sg,az,13,{italics:true}))})); return; }
+    if(b.t==="lb"||b.t==="lb2"){
+      H.push(new D.Paragraph({bullet:{level:b.t==="lb2"?1:0},spacing:{after:40},children:b.s.map(sg=>run(sg,az,b.t==="lb2"?15:17))}));
+      return;
+    }
     if(b.t==="img"){
-      let ancho=600, alto=Math.round(ancho*b.v.h/b.v.w); if(alto>760){ alto=760; ancho=Math.round(760*b.v.w/b.v.h); }
-      H.push(new D.Paragraph({alignment:D.AlignmentType.CENTER,spacing:{before:120,after:40},
+      let ancho=620, alto=Math.round(ancho*b.v.h/b.v.w); if(alto>720){ alto=720; ancho=Math.round(720*b.v.w/b.v.h); }
+      H.push(new D.Paragraph({alignment:D.AlignmentType.CENTER,spacing:{before:100,after:30},
         children:[new D.ImageRun({data:b.v.url.split(",")[1],transformation:{width:ancho,height:alto}})]}));
-      H.push(parr(b.pie,{tam:15,color:TENUE,despues:160}));
+      H.push(new D.Paragraph({spacing:{after:140},children:[new D.TextRun({text:b.pie,size:13,color:IJE_RC.g,font:IJE_FUENTE})]}));
       return;
     }
     if(b.t==="tabla"){
-      const TOT=10440, dxa=b.anchos.map(x=>Math.round(TOT*x/100));
-      const celda=(txt,cab,ancho,izq)=>new D.TableCell({width:{size:Math.round(TOT*ancho/100),type:D.WidthType.DXA},
-        shading:cab?{fill:"EEF2F8"}:undefined,margins:{top:50,bottom:50,left:80,right:80},
-        children:[new D.Paragraph({spacing:{before:0,after:0},alignment:izq?D.AlignmentType.LEFT:D.AlignmentType.RIGHT,
-          children:[new D.TextRun({text:String(txt),bold:!!cab,size:16,color:NEGRO,font:"Calibri"})]})]});
-      const rows=[new D.TableRow({tableHeader:true,children:b.cab.map((c,k)=>celda(c,true,b.anchos[k],k<2))})];
-      b.filas.forEach(f=>rows.push(new D.TableRow({cantSplit:true,children:f.map((c,k)=>celda(c,false,b.anchos[k],k===0||(k===1&&b.cab[1]==="Tema")))})));
+      const dxa=b.anchos.map(x=>Math.round(TOT*x/100));
+      const celda=(seg,cab,k,azf)=>new D.TableCell({width:{size:dxa[k],type:D.WidthType.DXA},
+        shading:cab?{fill:"EEF2F8"}:undefined,margins:{top:30,bottom:30,left:70,right:70},
+        children:[new D.Paragraph({spacing:{before:0,after:0},alignment:(k===0||(k===1&&b.cab[1]==="Tema"))?D.AlignmentType.LEFT:D.AlignmentType.RIGHT,
+          children:[new D.TextRun({text:seg.x,bold:cab||!!seg.b,size:14,color:cab?(az?IJE_RC.a:IJE_RC.n):IJE_col(seg,azf),font:IJE_FUENTE})]})]});
+      const rows=[new D.TableRow({tableHeader:true,children:b.cab.map((c,k)=>celda(S(c),true,k,az))})];
+      b.filas.forEach(f=>rows.push(new D.TableRow({cantSplit:true,children:f.c.map((sg,k)=>celda(sg,false,k,az||f.az))})));
       H.push(new D.Table({width:{size:TOT,type:D.WidthType.DXA},columnWidths:dxa,layout:D.TableLayoutType.FIXED,rows}));
-      H.push(parr("",{despues:120}));
     }
   });
   return new D.Document({creator:"CGES/DGAPP/AA · Gobierno de Jalisco",title:`CNIJE ${res.ed} · Jalisco`,
-    sections:[{properties:{page:{size:{width:12240,height:15840},margin:{top:900,right:900,bottom:900,left:900}}},
+    styles:{default:{document:{run:{font:IJE_FUENTE}}}},
+    sections:[{properties:{page:{size:{width:12240,height:15840},margin:{top:720,right:720,bottom:720,left:720}}},
       footers:{default:new D.Footer({children:[new D.Paragraph({alignment:D.AlignmentType.CENTER,children:[
-        new D.TextRun({text:`CNIJE ${res.ed} · Jalisco · CGES/DGAPP/AA · Página `,size:15,color:TENUE,font:"Calibri"}),
-        new D.TextRun({children:[D.PageNumber.CURRENT],size:15,color:TENUE,font:"Calibri"})]})]})},
+        new D.TextRun({text:`CNIJE ${res.ed} · Jalisco · CGES/DGAPP/AA · Página `,size:13,color:IJE_RC.g,font:IJE_FUENTE}),
+        new D.TextRun({children:[D.PageNumber.CURRENT],size:13,color:IJE_RC.g,font:IJE_FUENTE})]})]})},
       children:H}]});
 }
-/* ---------- salida 2: HTML que Word abre ---------- */
+/* ---------- salida 2: HTML que Word abre (si el CDN de docx no responde) ---------- */
 function IJE_aHTMLWord(res){
-  const p=[];
+  const p=[], col=(sg,az)=>"#"+IJE_col(sg,az);
+  const spans=(s,az)=>s.map(sg=>`<span style="color:${col(sg,az)}${sg.b?";font-weight:bold":""}">${IJE_esc(sg.x)}</span>`).join("");
+  let enLista=false;
+  const cerrar=()=>{ if(enLista){ p.push("</ul>"); enLista=false; } };
   res.B.forEach(b=>{
+    const az=!!b.az;
+    if(b.t!=="lb" && b.t!=="lb2") cerrar();
     if(b.t==="salto"){ p.push('<br clear="all" style="page-break-before:always">'); return; }
-    if(b.t==="h1"||b.t==="h2"||b.t==="h3"||b.t==="h4"){ p.push(`<${b.t}>${IJE_esc(b.v)}</${b.t}>`); return; }
+    if(b.t==="h1"||b.t==="h2"||b.t==="h3"){ p.push(`<${b.t}${az?' style="color:#'+IJE_RC.a+'"':""}>${IJE_esc(b.v)}</${b.t}>`); return; }
     if(b.t==="meta"){ p.push(`<p class="meta">${IJE_esc(b.v)}</p>`); return; }
-    if(b.t==="p"){ p.push(`<p>${IJE_esc(b.v)}</p>`); return; }
-    if(b.t==="nota"){ p.push(`<p class="nota">${IJE_esc(b.v)}</p>`); return; }
-    if(b.t==="lista"){ p.push("<ul>"+b.v.map(l=>`<li>${IJE_esc(l)}</li>`).join("")+"</ul>"); return; }
+    if(b.t==="leyenda"){ p.push(`<p class="ley"><b style="color:#${IJE_RC.a}">Código de color (borrar este recuadro antes de enviar):</b> `+
+      `<span style="color:#${IJE_RC.v}">verde = favorable para Jalisco;</span> <span style="color:#${IJE_RC.r}">rojo = desfavorable;</span> negro = necesario; `+
+      `<span style="color:#${IJE_RC.a}">azul = prescindible, o fuera del Reporte de resultados del CNIJF-E, que se puede borrar completo.</span></p>`); return; }
+    if(b.t==="p"){ p.push(`<p${b.chico?' class="chico"':""}>${spans(b.s,az)}</p>`); return; }
+    if(b.t==="nota"){ p.push(`<p class="nota">${spans(b.s,az)}</p>`); return; }
+    if(b.t==="lb"||b.t==="lb2"){ if(!enLista){ p.push("<ul>"); enLista=true; }
+      p.push(`<li${b.t==="lb2"?' class="sub"':""}>${spans(b.s,az)}</li>`); return; }
     if(b.t==="img"){ p.push(`<p style="text-align:center"><img src="${b.v.url}" width="620"></p><p class="pie">${IJE_esc(b.pie)}</p>`); return; }
-    if(b.t==="tabla"){ p.push("<table><tr>"+b.cab.map(c=>`<th>${IJE_esc(c)}</th>`).join("")+"</tr>"+
-      b.filas.map(f=>"<tr>"+f.map(c=>`<td>${IJE_esc(c)}</td>`).join("")+"</tr>").join("")+"</table>"); }
+    if(b.t==="tabla"){ p.push("<table><tr>"+b.cab.map(c=>`<th style="color:#${az?IJE_RC.a:IJE_RC.n}">${IJE_esc(c)}</th>`).join("")+"</tr>"+
+      b.filas.map(f=>"<tr>"+f.c.map(sg=>`<td style="color:${col(sg,az||f.az)}">${IJE_esc(sg.x)}</td>`).join("")+"</tr>").join("")+"</table>"); }
   });
+  cerrar();
   return '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'+
-    `<head><meta charset="utf-8"><title>CNIJE ${res.ed} · Jalisco</title><style>@page{size:21.59cm 27.94cm;margin:1.6cm}`+
-    "body{font-family:Calibri,Arial,sans-serif;color:#1A1A1A;font-size:10pt}h1{font-size:17pt;color:#1B3A8C;margin:0 0 3pt}"+
-    "h2{font-size:11pt;color:#0A2A5E;margin:0 0 3pt}h3{font-size:12.5pt;color:#1B3A8C;margin:12pt 0 4pt}h4{font-size:10.5pt;color:#0A2A5E;margin:8pt 0 3pt}"+
-    ".meta{color:#5A6472;font-size:8pt}.nota{font-size:8pt;color:#5A6472;font-style:italic}.pie{font-size:7.5pt;color:#5A6472}"+
-    "table{border-collapse:collapse;width:100%;margin:6pt 0 10pt}th{background:#EEF2F8;font-size:8pt;text-align:left;padding:3pt 5pt;border:1px solid #D5DCE6}"+
-    "td{font-size:8pt;padding:3pt 5pt;border:1px solid #D5DCE6}li{margin-bottom:3pt}</style></head><body>"+p.join("")+"</body></html>";
+    `<head><meta charset="utf-8"><title>CNIJE ${res.ed} · Jalisco</title><style>@page{size:21.59cm 27.94cm;margin:1.27cm}`+
+    "body{font-family:Montserrat,Arial,sans-serif;color:#1A1A1A;font-size:8.5pt}h1{font-size:15pt;margin:0 0 1pt}"+
+    "h2{font-size:9.5pt;margin:0 0 1pt}h3{font-size:10.5pt;margin:7pt 0 3pt}.meta{color:#5A6472;font-size:7pt}"+
+    ".ley{font-size:7pt;border-top:1px solid #1F6FD1;border-bottom:1px solid #1F6FD1;padding:2pt 0}.nota{font-size:6.5pt;font-style:italic}.chico{font-size:7pt}.pie{font-size:6.5pt;color:#5A6472}"+
+    "li{margin-bottom:2pt}li.sub{margin-left:14pt;font-size:7.5pt}table{border-collapse:collapse;width:100%;margin:4pt 0}"+
+    "th{background:#EEF2F8;font-size:7pt;text-align:left;padding:2pt 4pt;border:1px solid #D5DCE6}td{font-size:7pt;padding:2pt 4pt;border:1px solid #D5DCE6}"+
+    "</style></head><body>"+p.join("")+"</body></html>";
 }
 function IJE_bajar(blob,nombre){
   const u=URL.createObjectURL(blob), a=document.createElement("a");
